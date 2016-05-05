@@ -1,0 +1,1323 @@
+---
+title: "winHollyWood"
+author: "Azfar Basunia, Helian Feng, Wei Yu"
+date: "May 2, 2016"
+output: html_document
+---
+```{r, include=FALSE, warning=FALSE}
+# Working directory and libraries
+setwd("/Users/mdbasunia/Desktop/Azfar/Academics/HSPH/Spring16/Data_Science/Project/Final")
+library(readr)
+library(lubridate)
+library(broom)
+library(caret)
+library(tidyr)
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+library(stringr)
+library(lubridate)
+library(knitr)
+library(gridExtra)
+library(cowplot)
+library(tidytext)
+library(wordcloud)
+library(RColorBrewer)
+library(corrplot)
+library(leaps)
+library(car)
+library(broom)
+library(gganimate)
+```
+
+# Overview and Motivation
+
+The landscape of Hollywood films are rapidly changing. Over the generetions, films are evolving rapidly and boast huge diversity in  themes, genres, actors, directors, runtime etc. Themes that were relevant in the past are no longer present in today's films. Even within the same genre, emphasis on various features have evolved to accomodate modern expectations. As an example consider Marvel Comics based films pre-2000 and post 2000 era. Prominent pre-2000 era Marvel "classics" include Howard the Duck (1986) and Captain America (1990 - direct to video). After 2000, instead of going down the corny-campy route, Marvel revamped its story lines, hired serious directors, better actors and switched to high production values. Needless to say, their formula worked well.
+
+Anyone decently familiar with today's actors, directors or production companies often heuristically puts heavy emphasis on the former 3 factors for a movie's success. For instance, is it really surprising that a Daniel Day-Lewis film or a Christopher Nolan directed film or a Disney Pixar produced film succeeded in box office? Not really. 
+
+However, the movie landscape is incredibly convoluted and diverse. Not all successful films have a combinaiton of good actors, experienced directors or big budgetted production companies. Therefore, we wanted to formally investigate all features (aside from review) that can predict of a movie's success. 
+
+Our goal for this project is two fold : 
+1. To view how the film landscape has changed in the past few decades, and
+2. To identify key features that are predictive of any given movie's success.
+
+Overall, we ask : Is it possible to find a formula for success of any Hollywood film or even a film concept?
+
+------------ 
+
+# Related Work
+1. Hollwywood whitewashing. 
+
+![](news_clippings.png)
+
+
+Figure :White washing problem in recently released and upcoming blockbusters
+
+One of the major controversies surrounding Hollywood  is their continuous "whitewashing" of characters. Whitewashing refers to the practice of casting white actors in nonwhite roles. Recently, prominent director Ridley Scott has stated white actors are simply more renowned and production companies are not willing to finance films without "familiar faces." Apparently, Hollywood also work under the assumption that audiences will not turn out for movies with relatively unknown minority actors and acting choice is extremely important for profitability of a film. Critics of whitewashing have pointed out that whitewashing keeps talented minorties from achieving equility in the film industry and good directing can mitigate whitewashing well.
+
+In our project we want to investigate if casting choice is a significant predictor for a film's success. If so, how cruicial is it compared to the other significant factors? If casting choice does not influence profits strongly, then Hollywood should abandon its "profitability" argument for whitewashing films.
+
+
+-----------
+
+# Initial Questions
+
+1. How have people's taste in genre and themes changed in the past few decades? What genres are important today?
+
+2. What genres generate the most profit?
+
+3. Can we codify any actor, director or production company's influence by giving each a score?
+
+5. Does spending money on one principal actor bring in lots of profit?
+
+6. After assigning scores, can we use features avaiable for a movie (excluding ratings) - actor (score), director (score), production company (score), runtime, genre and themes to predict a movie's success?
+
+7. Do movies in the different budget classes (for example high vs. low budget) have the same predictors? In other words, do we have confounding from a movie's budget? Do we have to stratify our data?
+
+  
+----------
+
+# Data: Source, scraping method, cleanup, etc.
+
+## Source
+
+We tried IMDB first, which comprehensively stores most of the relevant information. Unfortunately, IMDB restricts the information download up to 1000 movies.  Furthermore, no information on total revenue summary (which was used to assign actor scores) was readily available. 
+
+Subsequently, we used TMDB - which provides free and user-friendly API. We cross checked some of the information to make sure that the data was accurate, and it was. TMDB provides infomraiton on 5 main actors, director, budget, revenue, genres, themes and release date. Information on earlier movies (from 1940s and 1950s) are scarcier and contain missing information on budget and revenue.
+
+
+## Scraping method
+
+We used a python script to scrape all data from TMDB API.
+
+## Cleanup
+
+#### Data tables
+
+We have provided 4 tables : the raw data table, the modified data table, additional information table, and upcoming table
+
+Reading in raw data and processed data
+```{r, warning=FALSE}
+# Raw Data
+raw_data <- read.csv("data_raw.csv") %>% tbl_df %>% select(-X)
+# Cleaned data directly from CSV
+data <- read.csv("movies_3.csv") %>% tbl_df %>% select(-X)
+data <- data %>%mutate(date=parse_date_time(releaseDate,"mdy"))
+data <-data %>% mutate(m=month(date), releaseYear = year(date))
+```
+
+The raw data table consists of information on all movies from 1920 onwards. We used the raw data to visualize trends on budget, genre, profit etc. 
+
+The processed data table is derived from the raw data table and contains clean and complete information on movies from 1987 onwards. We used this dataset to set actor and director scores and to perform all subsequent data analysis and prediction
+
+The additional information table consists of information on movie themes and keywords, which was used to evaluate trends in themes and categorize movies into binary saving the world or superhero movie category
+
+The upcoming movies table to predict the profit of films released in 2016
+
+#### Production company
+
+We standardized the names of top production companies by combining all the variations of a company's name (such as  "Fox" => "20th Century Fox") and included all subsidiary companies under the parent company (such as "Blue Sky Pictures" => "Warner Bros"). Finally, we added the total number of films under each production company
+
+```{r, warning=FALSE}
+# Standardize production company name
+data <- data %>% 
+  mutate(production= gsub(".*Fox.*", "20th Century Fox", production)) %>%
+  mutate(production= gsub(".*Alliance.*", "Alliance", production)) %>%
+  mutate(production= gsub(".*BBC.*", "BBC", production)) %>%
+  mutate(production= gsub(".*Universal.*", "Universal Pictures", production)) %>%
+  mutate(production= gsub(".*Paramount.*", "Paramount Film", production)) %>%
+  mutate(production= gsub(".*Columbia.*", "Columbia Pictures", production)) %>%
+  mutate(production= gsub(".*Disney.*", "Walt Disney", production)) %>%
+  mutate(production= gsub(".*DreamWorks.*", "DreamWorks", production)) %>%
+  mutate(production= gsub(".*Warner.*", "Warner Bros", production)) %>%
+  mutate(production= gsub(".*Summit.*", "Summit Entertainment", production)) %>%
+  mutate(production= gsub(".*Lions.*", "Lions", production)) %>%
+  mutate(production= gsub(".*Ingenious.*", "Ingenious", production)) %>%
+  mutate(production= gsub(".*Regency.*", "Regency", production)) %>%
+  mutate(production= gsub(".*Sony.*", "Sony", production)) %>%
+  mutate(production= gsub(".*Canal.*", "Canal", production)) %>%
+  mutate(production= gsub(".*France.*", "France", production)) %>%
+  mutate(production= gsub(".*Gems.*", "Sony", production)) %>%
+  mutate(production= gsub(".*Marvel.*", "Walt Disney", production))%>%
+  mutate(production= gsub(".*Touchstone.*", "Walt Disney", production)) %>%
+  mutate(production= gsub(".*Dimension.*", "The Weinstein Company", production))  %>%
+  mutate(production= gsub(".*TriStar.*", "Sony", production))   %>%
+  mutate(production= gsub(".*DC.*", "Warner Bros", production))   %>%
+  mutate(production= gsub(".*Castle Rock.*", "Warner Bros", production))  %>%
+  mutate(production= gsub(".*Caravan Pictures.*", "Spyglass Entertainment", production))  %>%
+  mutate(production= gsub(".*United Artists.*", "MGM", production)) %>%
+  mutate(production= gsub(".*MGM.*", "MGM", production)) %>%
+  mutate(production= gsub(".*Legendary Pictures.*", "Warner Bros", production)) %>%
+  mutate(production= gsub(".*Destination Films.*", "Sony", production)) %>%
+  mutate(production= gsub(".*Rogue Pictures.*", "Relativity Media", production)) %>%
+  mutate(production= gsub(".*Fine Line Features.*", "New Line Cinema", production)) %>%
+  mutate(production= gsub(".*Hollywood Pictures.*", "Walt Disney", production)) %>%
+  mutate(production= gsub(".*Channel Four Films.*", "Film4", production)) %>%
+  mutate(production= gsub(".*Film 4.*", "Film4", production)) %>%
+  mutate(production= gsub(".*Artisan Entertainment.*", "Lions", production)) %>%
+  mutate(production= gsub(".*Lucasfilm.*", "Walt Disney", production)) %>%
+  mutate(production= gsub(".*Working Title Films.*", "Universal Pictures", production)) %>%
+  mutate(production= gsub(".*Revolution.*", "Revolution", production)) %>%
+  mutate(production= gsub(".*Focus Features.*", "Universal Pictures", production)) %>%
+  mutate(production= gsub(".*Silver Pictures.*", "Warner Bros", production)) %>%
+  mutate(production= gsub(".*Blue Sky Studios.*", "Warner Bros", production)) %>%
+  mutate(USA=ifelse(country=="United States of America",1,0)) %>%
+  select(-country)
+# Total number of movies in each production company
+data <- data%>% 
+  group_by(production) %>%
+  mutate(s_production=n()) %>%
+  ungroup()
+```
+
+#### Genre
+
+NOTE : This was performed on our raw data table ( variable = raw_data ).
+
+We seprated the sinlge column of genres (in list form) into separate genre columns and assigned True/False in each genre category for each movie. 
+
+ 
+```{r, warning=FALSE}
+movies<-raw_data%>%mutate(date=parse_date_time(releaseDate,"mdy"))
+movies<-movies%>%mutate(year=as.numeric(year(date)))
+movies <- movies %>% mutate(year=ifelse(year>2015,year-100,year))
+genre_list<-c(
+  'Action','Adventure','Animation','Comedy','Crime','Documentary','Drama','Family','Fantasy','Foreign','History','Horror','Music','Mystery','Romance','ScienceFiction','Thriller','War','Western')
+head(movies$genres)
+# Function to separate genres
+fun<-function(x){
+  grepl(x,movies$genres)
+}
+# Apply function
+tmp<-sapply(genre_list,fun)
+movie_genre<-cbind(movies,tmp)
+  
+```
+
+
+-----
+
+# Exploratory Analysis 
+
+##  Trend Analysis on raw data
+
+#### General Trends
+```{r, warning=FALSE}
+# General trend
+p1<-movie_genre%>%group_by(year)%>%summarize(n=n())%>%
+  ggplot(aes(x=year,y=n))+geom_jitter()+ggtitle("Trend of Number of movies")
+p2<-movie_genre%>%group_by(year)%>%summarize(ave_rating=mean(rating))%>%
+  ggplot(aes(x=year,y=ave_rating))+geom_jitter()+ggtitle("Trend of average rating of movies")
+p3<-movie_genre%>%group_by(year)%>%summarize(num_rating=sum(num_rating))%>%
+  ggplot(aes(x=year,y=num_rating))+geom_jitter()+ggtitle("Trend of number of rating of movies")
+plot_grid(p1, p2,p3, ncol = 1, nrow = 3)
+
+#Profit associated trend
+p4<-movie_genre%>%
+  filter(budget!=0 &revenue !=0)%>%
+  group_by(year)%>%
+  summarize(ave_budget=mean(budget))%>%
+  ggplot(aes(x=year,y=ave_budget))+geom_jitter()+ggtitle("Trend of average budget of movies")
+
+p5<-movie_genre%>%
+  filter(budget!=0 &revenue !=0)%>%
+  group_by(year)%>%
+  summarize(ave_revenue=mean(revenue))%>%
+  ggplot(aes(x=year,y=ave_revenue))+geom_jitter()+ggtitle("Trend of average revenue of movies")
+plot_grid(p4, p5, ncol = 1, nrow = 2)
+
+```
+
+
+As we can see from above trend plots, the movie industry has changed quite a lot after 1990s. Thus, we think it's not appliable to use information before 1990s to make predictions.
+
+#### People's taste
+```{r, warning=FALSE}
+# Total movies in each genre in the raw data set
+movie_genre%>%select(Action:Western)%>%
+  apply(2,sum)
+```
+
+We can see most of the movies are Action, Adventure, Comedy, Crime, Romance and Thriller. Note that the Science fiction category tally is not really 0, as in reality, science fiction movies may have been categorized in the other categories.
+
+```{r, warning=FALSE}
+t1<-movie_genre%>%group_by(year)%>%
+  summarize(p_Action=sum(Action)/n())
+t2<-movie_genre%>%group_by(year)%>%
+  summarize(p_Adventure=sum(Adventure)/n())
+t3<-movie_genre%>%group_by(year)%>%
+  summarize(p_Comedy=sum(Comedy)/n())
+t4<-movie_genre%>%group_by(year)%>%
+  summarize(p_Crime=sum(Crime)/n())
+t5<-movie_genre%>%group_by(year)%>%
+  summarize(p_Romance=sum(Romance)/n())
+t6<-movie_genre%>%group_by(year)%>%
+  summarize(p_Thriller=sum(Thriller)/n())
+t<-t1%>%full_join(t2)%>%full_join(t3)%>%full_join(t4)%>%full_join(t5)%>%full_join(t6)
+# Plots
+t%>%gather(key=genre_percent,value=percentage,-year)%>%
+  ggplot(aes(x=year,y=percentage,col=genre_percent))+
+  geom_point()+geom_smooth(se=FALSE)+ggtitle("Relative composition of each genre")
+t%>%gather(key=genre_percent,value=percentage,-year)%>%
+  filter(year>1995)%>%
+  ggplot(aes(x=year,y=percentage,col=genre_percent))+
+  geom_point()+geom_smooth(se=FALSE)+ggtitle("Relative composition of each genre after 1995")
+tmp<-t%>%gather(key=genre_percent,value=percentage,-year)
+tmp<-tmp%>%mutate(decade=floor(year/10)*10)
+p<- tmp%>%ggplot(aes(year,percentage,frame=decade))+geom_point()+geom_smooth(se=FALSE,aes(frame=decade))+facet_wrap(~genre_percent)
+#gg_animate(p,"p1.gif")
+#![p1](p1.gif)
+
+```
+
+
+The above plots describe how people's taste have changed through the years. In the post 1995 graph, we can see a clear drop in comedies and romance, in favor of action and adventure.
+
+#### Profit from each movie category
+```{r, warning=FALSE}
+t1<-movie_genre%>%group_by(year)%>%
+  filter(Action==TRUE)%>%
+  summarize(r_Action=mean(revenue,na.rm=TRUE))
+t2<-movie_genre%>%group_by(year)%>%
+  filter(Adventure==TRUE)%>%
+  summarize(r_Adventure=mean(revenue,na.rm=TRUE))
+t3<-movie_genre%>%group_by(year)%>%
+  filter(Comedy==TRUE)%>%
+  summarize(r_Comedy=mean(revenue,na.rm=TRUE))
+t4<-movie_genre%>%group_by(year)%>%
+  filter(Crime==TRUE)%>%
+  summarize(r_Crime=mean(revenue,na.rm=TRUE))
+t5<-movie_genre%>%group_by(year)%>%
+  filter(Romance==TRUE)%>%
+  summarize(r_Romance=mean(revenue,na.rm=TRUE))
+t6<-movie_genre%>%group_by(year)%>%
+  filter(Thriller==TRUE)%>%
+  summarize(r_Thriller=mean(revenue,na.rm=TRUE))
+t<-t1%>%full_join(t2)%>%full_join(t3)%>%full_join(t4)%>%full_join(t5)%>%full_join(t6)
+# Plots
+t%>%gather(key=genre_revenue,value=average_revenue,-year)%>%
+  ggplot(aes(x=year,y=average_revenue,col=genre_revenue))+
+  geom_point()+geom_smooth(se=FALSE)+ggtitle("Average movie revenue of movie genre")
+t%>%gather(key=genre_revenue,value=average_revenue,-year)%>%
+  filter(year>1995)%>%
+  ggplot(aes(x=year,y=average_revenue,col=genre_revenue))+
+  geom_point()+geom_smooth(se=FALSE)+ggtitle("Average movie revenue of movie genre after 1995")
+tmp<-t%>%gather(key=genre_revenue,value=average_revenue,-year)%>%
+  filter(year>1995)%>%mutate(decade=floor(year/5)*5)
+p<- tmp%>%ggplot(aes(year,average_revenue))+geom_point()+geom_smooth(se=FALSE,aes(frame=decade,group=decade))+facet_wrap(~genre_revenue)
+#gg_animate(p,"p2.gif")
+#![p2](p2.gif)
+
+```
+
+
+We see a large increase in movie revenue across all genres over the years (very intuitive and obvious). Interestingly, after 1995, the revenue for adventure flicks have increased exponentially since 1995. This could be due to the increasing popularity of film adaptions of popular comic books (super hero films) or adventure/fantasy books (Lord of the Rings and Harry Potter film series) after the 1990s.
+
+## Themes
+
+We wanted to identify general themes that might be popular choices for successful movies
+
+NOTE : We used the updated dataset (variable = data) for this analysis
+```{r, warning=FALSE}
+movies<- data
+movies<-movies%>%mutate(year=ifelse(year>2015,year-100,year))
+addition<-read.csv("movies_aditionalinfo.csv")
+ad<-movies%>%left_join(addition,by="TMDBID")
+
+# Get relevant keywords
+words<-ad%>%select(year,TMDBID,revenue,num_rating,keyword1,keyword2,keyword3)%>%
+  gather(key=rank,value=keyword,-c(year,TMDBID,num_rating,revenue))
+words<-words%>%filter(! keyword %in% stop_words$word)
+
+# Poplarity of themes  between 1995-2015
+words%>%filter(!is.na(keyword))%>%
+  count(keyword,sort=TRUE)%>%
+  filter(n>20)%>%
+  mutate(word=reorder(keyword,n))%>%
+  ggplot(aes(word,n))+geom_bar(stat="identity")+coord_flip()
+
+# Popularity of Themes between 1995-2005
+words%>%filter(year<2005,!is.na(keyword))%>%
+  count(keyword,sort=TRUE)%>%
+  filter(n>10)%>%
+  mutate(word=reorder(keyword,n))%>%
+  ggplot(aes(word,n))+geom_bar(stat="identity")+coord_flip()
+
+# Popularity of Themes between 2005-2015
+words%>%filter(year>=2005,!is.na(keyword))%>%
+  count(keyword,sort=TRUE)%>%
+  filter(n>10)%>%
+  mutate(word=reorder(keyword,n))%>%
+  ggplot(aes(word,n))+geom_bar(stat="identity")+coord_flip()
+
+## Word Cloud
+pal <- brewer.pal(9,"BuGn")
+pal <- pal[-(1:4)]
+# Popularity of themes between 1995-2015
+common<-words%>%filter(!is.na(keyword))%>%
+  count(keyword,sort=TRUE)
+wordcloud(common$keyword,common$n,min.freq =18,scale=c(3,.5),random.order=TRUE, colors=pal)
+
+# Popularity of Themes between 1995-2005
+common<-words%>%filter(year<2005,!is.na(keyword))%>%
+  count(keyword,sort=TRUE)
+wordcloud(common$keyword,common$n,min.freq = 8,scale=c(3,.5),random.order=TRUE, colors=pal)
+
+# Popularity of Themes between 2005-2015
+common<-words%>%filter(year>=2005,!is.na(keyword))%>%
+  count(keyword,sort=TRUE)
+wordcloud(common$keyword,common$n,min.freq = 8,scale=c(3,.5),random.order=TRUE, colors=pal)
+```
+
+We managed to idenfiy some popular themes such as : "base on novel", "newyork","dystopia","superhero","saving the world","murder","sport","prison". Novel adaptations have been popular in the last two decades, and its popularity skyrocketed in the last decade. Hence, our previous intuition regarding that the increased popularity of action and adventure films were due to the rising popularity of novel or book adaptations does not seem far-fetched.
+
+```{r, warning=FALSE}
+ave=median(movies$revenue)
+ave
+k<-"based on novel"
+t<-words%>%filter(keyword==k)
+ratio<-mean(as.numeric(t$revenue)/ave,na.rm=TRUE)
+plot_table<-data_frame(keywords=k,ratio_against_median=ratio)
+k<-"new york"
+t<-words%>%filter(keyword==k)
+ratio<-mean(as.numeric(t$revenue)/ave,na.rm=TRUE)
+plot_table<-bind_rows(plot_table,data_frame(keywords=k,ratio_against_median=ratio))
+
+k<-"dystopia"
+t<-words%>%filter(keyword==k)
+ratio<-mean(as.numeric(t$revenue)/ave,na.rm=TRUE)
+plot_table<-bind_rows(plot_table,data_frame(keywords=k,ratio_against_median=ratio))
+
+k<-"superhero"
+t<-words%>%filter(keyword==k|keyword=="superhero team")
+ratio<-mean(as.numeric(t$revenue)/ave,na.rm=TRUE)
+plot_table<-bind_rows(plot_table,data_frame(keywords=k,ratio_against_median=ratio))
+
+k<-"saving the world"
+t<-words%>%filter(keyword==k)
+ratio<-mean(as.numeric(t$revenue)/ave,na.rm=TRUE)
+plot_table<-bind_rows(plot_table,data_frame(keywords=k,ratio_against_median=ratio))
+
+k<-"murder"
+t<-words%>%filter(keyword==k)
+ratio<-mean(as.numeric(t$revenue)/ave,na.rm=TRUE)
+plot_table<-bind_rows(plot_table,data_frame(keywords=k,ratio_against_median=ratio))
+
+k<-"sport"
+t<-words%>%filter(keyword==k)
+ratio<-mean(as.numeric(t$revenue)/ave,na.rm=TRUE)
+plot_table<-bind_rows(plot_table,data_frame(keywords=k,ratio_against_median=ratio))
+
+k<-"prison"
+t<-words%>%filter(keyword==k)
+ratio<-mean(as.numeric(t$revenue)/ave,na.rm=TRUE)
+plot_table<-bind_rows(plot_table,data_frame(keywords=k,ratio_against_median=ratio))
+plot_table%>%kable
+
+plot_table%>%ggplot(aes(x=keywords,y=ratio_against_median))+geom_bar(stat="identity")+
+  theme(axis.text.x  = element_text(angle=90, vjust=0.5))
+```
+
+The above table and bar plot charts the ratio of between the average revenue of a movie from a particular theme and the median revenue of all movies between 1995 and 2015. 
+This time, we looked deeper into the "superhero" and "saving the world category", and clearly those moves are doing between around 4 and 6 times better than any median movie in terms of revenue gain.
+
+
+#### Production Company's prefernce
+
+We looked at the number of movies in the 6 major genres (Action, Adventure, Comedy, Drama, Romance and Thriller) made by top 10 production companies made after 1987, to get a sense of a top production company's prefernce for a particular genre.
+```{r, warning=FALSE}
+prefer=data %>% group_by(production) %>%
+  summarize(Action=sum(Action),
+            Adventure=sum(Adventure),
+            Animation=sum(Animation),
+            Comedy=sum(Comedy),
+            Crime=sum(Crime),
+            Documentary=sum(Documentary),
+            Drama=sum(Drama),
+            Family=sum(Family),
+            Fantasy=sum(Fantasy),
+            History=sum(History),
+            Horror=sum(Horror),
+            Music=sum(Music),
+            Mystery=sum(Mystery),
+            Romance=sum(Romance),
+            Thriller=sum(Thriller),
+            War=sum(War),
+            Western=sum(Western),
+            s_production=mean(s_production),
+            ratio=sum(revenue)/sum(as.double(budget)))
+
+# make a geom_bar('stack here showing the effect')
+prefer<-prefer[order(-prefer$s_production),]
+
+#top 10 compabnies
+prefer%>%slice(1:10)
+
+dat_p<-prefer %>% slice(1:10)%>%
+  select(production,Action,Adventure,Comedy,Romance,Drama,Thriller)
+dat_p<-dat_p%>%gather(key=type,value=number,-production)
+
+# Plotting
+
+ggplot(data = dat_p, aes(x = production, y = number, fill = type)) +geom_bar(stat="identity")+theme(axis.text.x  = element_text(angle=90, vjust=0.5))
+
+
+prod=prefer$production
+prefer1= prefer%>% select(-production,-s_production)
+genre_prefer=colnames(prefer1)[apply(prefer1,1,which.max)]
+prefer_genre=data.frame(prod,genre_prefer)
+```
+
+No particular major genre stands out as a speciality for any of the production company. We will consider s_production as our score for a production company. 
+
+## Assigning Score 
+
+#### Actors
+We separated the single columm of actors (in list form) into 5 separate columns for each actor. The actor score an actor estimates the actor's potential to bring in the "big bucks" and is based on the revenue of the actor's movie. We  calculated the average budget of all movies for each year and the budget proportion of every movie. The score for every actor is the sum of all budget proportions for the actor's movies multiplied by a factor that accounts for the number of movies the actor appeared in. We also calculated the individual genre score  to gain a sense of the the actor's preferred genre.
+```{r, warning=FALSE}
+# Calculate Average Budget of movies per year from 1996 onwards
+dat <- data %>% 
+  filter( releaseYear >= 1996) %>%
+  group_by(year) %>% 
+  mutate(year_bud_ave=mean(budget,na.rm=TRUE))
+
+# Calculate budget proportion of each movies = budget of movie/mean budget of that year
+dat <-dat %>% 
+  mutate(budget_p=budget/year_bud_ave*10)
+
+# Actor score
+wide_actors <- dat %>% select(TMDBID, title, rating, star1:star5, Action, Adventure, Comedy, Drama, Family, Fantasy, Horror, Mystery, Thriller,budget_p)
+long_actors <- wide_actors %>% gather(key = star, value = name, -c(TMDBID, title, rating, Action, Adventure, Comedy, Drama, Family, Fantasy, Horror, Mystery, Thriller,year,budget_p))
+
+t_actors <- long_actors %>% mutate(Action = ifelse(Action==TRUE,budget_p,0))%>%
+  mutate(Adventure=ifelse(Adventure==TRUE,budget_p,0))%>%
+  mutate(Comedy=ifelse(Comedy==TRUE,budget_p,0))%>%
+  mutate(Drama=ifelse(Drama==TRUE,budget_p,0))%>%
+  mutate(Family=ifelse(Family==TRUE,budget_p,0))%>%
+  mutate(Fantasy=ifelse(Fantasy==TRUE,budget_p,0))%>%
+  mutate(Horror=ifelse(Horror==TRUE,budget_p,0))%>%
+  mutate(Mystery=ifelse(Mystery==TRUE,budget_p,0))%>%
+  mutate(Thriller=ifelse(Thriller==TRUE,budget_p,0))
+
+## Score by Genre
+score_actors <-t_actors %>% group_by(name)%>%
+  summarize(s_Action=sum(Action),s_Adventure=sum(Adventure),s_Comedy=sum(Comedy),s_Drama=sum(Drama),s_Family=sum(Family),s_Fantasy=sum(Fantasy),s_Horror=sum(Horror),s_Mystery=sum(Mystery),s_Thriller=sum(Thriller))
+
+## Overall Score
+actor_score_f<-t_actors %>% group_by(name)%>%
+  summarize(a_n=n(), a_score=sum(budget_p)*((a_n+2)/a_n))
+#write_csv(actor_score_f %>% select(-a_n), "actor_score_f.csv")
+
+# Exploratory Data analysis : Top 10 Actors and their preference
+t<-actor_score_f%>%left_join(score_actors)
+t<-t[order(-t$a_score),]
+t%>%slice(1:10)
+dat_p<-t %>% slice(1:10) %>%
+  mutate(s_Others = s_Family + s_Fantasy + s_Horror + s_Mystery) %>%
+  select(name,s_Action,s_Adventure,s_Comedy,s_Drama,s_Thriller, s_Others)
+dat_p<-dat_p%>%gather(key=type,value=score,-name)
+ggplot(data = dat_p, aes(x = name, y = score, fill = type)) +geom_bar(stat="identity")+theme(axis.text.x  = element_text(angle=90, vjust=0.5))+ggtitle("Top 10 actors and their score in each genre")
+
+```
+
+The table details the ranked score for top 10 directors as well as some of the individual genre scores.
+
+The stacked barplot breaks displays the absolute score ( preference) for each director in each genre. Note that the plot is not in any order and the overall height of the multicolored bar does not reflect the overall score for each director, because a movie is classified in multiple genres. 
+
+
+
+#### Directors
+Directors were scored similar to actors. The director score is based on the number of ratings (not the rating itself) of the director's movie. Our rationale is that the number of ratings for a particular movie indicate the movie's popularity among the audience, and has a higher influence on the director's potential to direct a box office success. 
+
+We calculated the average number of ratings of all movies for each year and the ratings' numbers' proportion for every movie. The overall score for a director is the sum of all rating proportions for the director's movies multiplied by a factor that accounts for the number of movies the director directed. We also calculated the individual genre score  to gain a sense of the the director's preferred genre.
+
+```{r, warning=FALSE}
+# Average number of ratings per year and the rating proportion
+dat<-dat %>% 
+  group_by(year) %>%
+  mutate(year_rate_ave=mean(num_rating,na.rm=TRUE))
+dat<-dat%>%mutate(rating_p=num_rating/year_rate_ave*10)
+
+long_directors <- dat %>% select(TMDBID, title, rating_p, director, Action, Adventure, Comedy, Drama, Family, Fantasy, Horror, Mystery, Thriller)
+
+t_directors <- long_directors %>% mutate(Action = ifelse(Action==TRUE,rating_p,0))%>%
+  mutate(Adventure=ifelse(Adventure==TRUE,rating_p,0))%>%
+  mutate(Comedy=ifelse(Comedy==TRUE,rating_p,0))%>%
+  mutate(Drama=ifelse(Drama==TRUE,rating_p,0))%>%
+  mutate(Family=ifelse(Family==TRUE,rating_p,0))%>%
+  mutate(Fantasy=ifelse(Fantasy==TRUE,rating_p,0))%>%
+  mutate(Horror=ifelse(Horror==TRUE,rating_p,0))%>%
+  mutate(Mystery=ifelse(Mystery==TRUE,rating_p,0))%>%
+  mutate(Thriller=ifelse(Thriller==TRUE,rating_p,0))
+
+# Director Score by Genre
+score_director <- t_directors %>% group_by(director)%>%
+  summarize(s_Action=sum(Action),s_Adventure=sum(Adventure),s_Comedy=sum(Comedy),s_Drama=sum(Drama),s_Family=sum(Family),s_Fantasy=sum(Fantasy),s_Horror=sum(Horror),s_Mystery=sum(Mystery),s_Thriller=sum(Thriller))
+
+# Overall Score
+director_score_f <- dat %>% 
+  group_by(director) %>% 
+  summarize(d_n = n(), d_score=sum(rating_p)*((d_n+2)/d_n))
+#write_csv(director_score_f %>% select(-d_n), "director_score_f.csv")
+
+# Exploratory Data Analysis : Top 10 directors and their preferences
+t2<-director_score_f%>%left_join(score_director)
+t2<-t2[order(-t2$d_score),]
+t2 %>% slice(1:10) 
+dat_p<-t2 %>% slice(1:10) %>%
+  mutate(s_Others = s_Family + s_Fantasy + s_Horror + s_Mystery) %>%
+  select(director,s_Action,s_Adventure,s_Comedy,s_Drama,s_Thriller,s_Others)
+dat_p<-dat_p%>%gather(key=type,value=score,-director)
+ggplot(data = dat_p, aes(x = director, y = score, fill = type)) +geom_bar(stat="identity")+theme(axis.text.x  = element_text(angle=90, vjust=0.5))+ ggtitle("Top 10 actors and their score in each genre")
+```
+
+The table details the ranked score for top 10 directors as well as some of the individual genre scores.
+
+The stacked barplot breaks displays the absolute score ( preference) for each director in each genre. Note that the plot is not in any order and the overall height of the multicolored bar does not reflect the overall score for each director, because a movie is classified in multiple genres. 
+
+#### Evaluate director and actor
+We want to explore whether a movie with several good actors make more money than a movie with a singular good actor
+```{r, warning=FALSE}
+# Can also be read from the tables below
+#score_actors <- read.csv("score_actor_f.txt")
+#score_director <- read.csv("score_director_f.txt")
+
+score_actors <- actor_score_f %>% select(c(name, a_score))
+score_director <- director_score_f %>% 
+  select(director, d_score) %>% 
+  mutate(director=as.character(director))
+
+#data_bkup -> data
+data<-data%>%mutate(director=as.character(director),star1=as.character(star1),star2=as.character(star2),star3=as.character(star3),star4=as.character(star4),star4=as.character(star4),star5=as.character(star5))
+data<-left_join(data,score_director,by.x="director",by.y="director")
+
+
+
+t<-data%>%select(TMDBID,star1:star5)%>%left_join(score_actors,by=c("star1"="name"))
+colnames(t)<-c("TMDBID",  "star1",   "star2",   "star3",   "star4",  "star5",   "a_score1")
+t<-t%>%left_join(score_actors,by=c("star2"="name"))
+colnames(t)<-c("TMDBID",  "star1",   "star2",   "star3",   "star4",  "star5",   "a_score1","a_score2")
+t<-t%>%left_join(score_actors,by=c("star3"="name"))
+colnames(t)<-c("TMDBID",  "star1",   "star2",   "star3",   "star4",  "star5",   "a_score1","a_score2","a_score3")
+t<-t%>%left_join(score_actors,by=c("star4"="name"))
+colnames(t)<-c("TMDBID",  "star1",   "star2",   "star3",   "star4",  "star5",   "a_score1","a_score2","a_score3","a_score4")
+t<-t%>%left_join(score_actors,by=c("star5"="name"))
+colnames(t)<-c("TMDBID",  "star1",   "star2",   "star3",   "star4",  "star5",   "a_score1","a_score2","a_score3","a_score4","a_score5")
+t<-t%>%mutate(a_score1=ifelse(is.na(a_score1),0,a_score1),a_score2=ifelse(is.na(a_score2),0,a_score2),a_score3=ifelse(is.na(a_score3),0,a_score3),a_score4=ifelse(is.na(a_score4),0,a_score4),a_score5=ifelse(is.na(a_score5),0,a_score5))
+
+# Evaluate actors
+data<-data%>%mutate(budget_ratio=budget/median(budget))
+
+t<-t%>%mutate(first_star_potion=a_score1/(a_score1+a_score2+a_score3+a_score4+a_score5))
+t<-t%>%mutate(first_star_potion=ifelse(first_star_potion==Inf,0,first_star_potion))
+dat_star<-data%>%select(TMDBID,revenue,budget_ratio)%>%left_join(t,by="TMDBID")
+
+dat_star%>%ggplot(aes(x=first_star_potion,y=revenue))+geom_point()
+
+fit<-lm(revenue~first_star_potion,data = dat_star)
+summary(fit)
+
+# Account for confounding from budget
+
+fit<-lm(revenue~first_star_potion+budget_ratio,data = dat_star)
+summary(fit)
+
+# Join actor score to main table
+
+t<-t%>%mutate(a_score_t=(0.4*a_score1+0.30*a_score2+0.20*a_score3+0.05*a_score4+0.05*a_score5))
+
+data<-t%>%select(TMDBID,a_score_t,first_star_potion)%>%left_join(data,by="TMDBID")
+
+```
+From the first linear fit without budget considerations, it seems that money spent of the first actor does influence the revenue of a movie. But we  need to wory about confounding effect of bugdet, since high budget movies will earn more money regardless of the money they spend on better actors. After we account for confounding in terms of a budget ratio of the movie (movie's budget/median budget of all films after 1987), we see that the effect of expenditure on first actor disappears. Hence, we need to consider stratifying on movie's budget category (low, medium or high budget) for further analysis.
+
+#### Add influential keywords
+```{r, warning=FALSE}
+# Adding major key points to the main table (variable = data)
+ad <- addition
+ad<-ad%>%mutate(I_superhero=(keyword1=="superhero"|keyword2=="superhero"|keyword3=="superhero"|keyword1=="superhero team"|keyword2=="superhero team"|keyword3=="superhero team"))
+ad<-ad%>%mutate(I_saving_world=(keyword1=="saving the world"|keyword2=="saving the world"|keyword3=="saving the world"))
+ad<-ad%>%mutate(I_superhero=ifelse(is.na(I_superhero),FALSE,I_superhero))
+ad<-ad%>%mutate(I_saving_world=ifelse(is.na(I_saving_world),FALSE,I_saving_world))
+tmp<-ad%>%select(TMDBID,I_saving_world,I_superhero)
+data<-data%>%left_join(tmp,by="TMDBID")
+data<-data%>%mutate(profit=revenue-budget)
+max(data$profit)
+median(data$profit)
+quantile(data$profit,0.98)
+data<-data%>%mutate(profit=ifelse(profit>605475499,605475499,profit  ))
+data<-data%>%mutate(profit_r=profit/median(profit))
+
+data_checkpoint1<-data
+```
+
+## Runtime
+
+Do longer movies garner more profit?
+
+```{r, warning=FALSE}
+data %>%
+  mutate(runtime=10*round(runtime/10)) %>%
+  group_by(runtime) %>%
+  summarise(mean_profit=mean(profit)) %>%
+  ggplot(aes(x=runtime,y=mean_profit))+geom_point()+scale_y_continuous(limits = c(0, 500000000))+scale_x_continuous(limits = c(10, 350))+xlab("run time (mins)")+ylab("mean profi")
+
+```
+
+We can see that longer movies do seem to garner more profit. However, budget can be a confounder in this case, because longer movies generally have higher budget.
+
+## Number of ratings
+
+We explored the effect of the number of ratings on the prospect of success of a movie, i.e. profit/budget. We looked separately in each of the genres
+```{r, warning=FALSE}
+num_rat=data  %>% 
+  gather(key = genre, value=check ,  Action:Western) %>%
+  filter(check==1) %>%
+  select(-check) %>%
+  group_by(genre) %>%
+  mutate(count=n()) %>%
+  ungroup %>%
+  filter(count>100)
+num_rat %>% 
+  ggplot(aes(x=num_rating,y=log(revenue/budget)))+geom_point(aes(color=genre))+geom_smooth(span=0.02,col="blue")+scale_y_continuous(limits = c(-2.5, 2.5))+ facet_wrap(~genre)+xlab(" number of ratings")+ylab("log(profit_ratio)")
+```
+
+The graphs above indicate a clear positive correlation between the prospect of success and the number of ratings for action, adventure, fantasies, history, mystery and romance films. However, the number of ratings is only immediately available before a film's release, and therefore will not be used to in our models
+
+
+## Budget
+
+When it comes to movie's profit, the first thing might came to our mind is a production company invests, the more it will gain in profits. Is it true?
+
+```{r, warning=FALSE}
+#let's look at our main predictor distribution first
+par(mfrow=c(1,2))
+hist(data$budget)
+hist(data$profit)
+
+#they are oviously skewed, let't take the log transformation of them 
+data<-data%>%mutate(profit=log(profit+300000000))
+min(data$budget)
+median(data$budget)
+data<-data%>%mutate(budget=log(budget+100))
+hist(data$budget)
+hist(data$profit)
+
+# visualize points (we filtered low outliers)
+data%>%filter(budget>15)%>%ggplot(aes(x=budget,y=profit))+geom_point()+xlab("log(budget)")+ylab("log(profit)")
+
+# fit linear model with budget and profit
+fit_budget<-lm(profit~budget,data = data)
+summary(fit_budget)
+
+#diagnostic plots, residue plot
+par(mfrow=c(2,2))
+plot(fit_budget)
+par(mfrow=c(1,1))
+# Get profit
+mean(select(filter(data,budget>median(data$budget,na.rm = TRUE)),profit)>median(data$profit))
+```
+
+First we looked at the distribution of both profit and budget. We find that they are both skewed and there decided to log transform both both budget and profit. 
+
+After fitting a linear model, we find that log(budget) predicts a movie's log(profit). The QQ plot looks approximately normal in the middle range. Hence, big budget films should make more profit. In fact, we find that 67% of the movies have a budget above the meadian budget will make more protfit than the median profit of all films.
+
+NOTE : After log transformation, our variables budget and profit refer to the log transformed variables respectively.
+
+---- 
+
+# Final analysis : Model Building
+
+## Important factors to predict a movie's profit
+
+#### Linear Regression
+First, we try a linear regression with a few  predictors we created in the previous sections to get a rough idea of which  predictors can be useful for further analysis. 
+
+```{r, warning=FALSE}
+# Prepare data for regression table
+# Adding season factor => 0: other, 1: summer
+data<-data%>%mutate(season=ifelse((data$m>=4 &data$m<=8),1,0))
+# Categories
+data<-data%>%mutate(d_score=ifelse(is.na(d_score),0.01,d_score))
+data<-data%>%mutate(Action=as.numeric(Action),Adventure=as.numeric(Adventure),Animation=as.numeric(Animation),Comedy=as.numeric(Comedy),Crime=as.numeric(Crime),Drama=as.numeric(Drama),Romance=as.numeric(Romance),Thriller=as.numeric(Thriller),I_superhero=as.numeric(I_superhero),I_saving_world=as.numeric(I_saving_world),first_star_potion=first_star_potion*10)
+# First actor's portion of budget = which we predict is around 40% of budget
+data<-data%>%mutate(first_star_potion=ifelse(first_star_potion==0,0.1,first_star_potion))
+dat_checkpoint2<-data
+
+dat<-data%>%select(TMDBID,profit,a_score_t,first_star_potion,runtime,budget_ratio,year,Action,Adventure,Animation,Comedy,Crime,Drama,Romance,Thriller,USA,s_production,d_score,I_saving_world,I_superhero,season)
+
+dat<-dat%>%select(-c(TMDBID))
+
+# Build regression model
+dat<-dat[complete.cases(dat),]
+fit=lm(profit~.,data=dat)
+summary(fit)
+```
+
+Sadly, after adjusting for other variables, saving the world and super hero movies won't let you make more money.
+
+#### Model selection
+
+Now, we refine our initial model and try model selection using AIC and forward-backward selection to identify key predictors in a systematically. 
+
+```{r, warning=FALSE}
+step <- MASS::stepAIC(fit, direction="both",na.rm=TRUE,trace=FALSE)
+
+step$anova %>% kable
+#Final Model:profit = 
+#first_star_potion + runtime + budget_ratio + year + Action + Adventure + Animation + Drama + Romance + Thriller +  USA + s_production + d_score + season
+
+# fitting model with budget ratio
+fit_profit=lm(profit ~ first_star_potion + runtime + budget_ratio + year + 
+    Action + Adventure + Animation + Drama + Romance + Thriller + 
+    USA + s_production + d_score + season,data=data)
+summary(fit_profit)
+
+# fitting model with budget ratio
+fit_profit=lm(profit ~ first_star_potion + runtime + budget_ratio + year + 
+    Action + Adventure + Animation + Drama + Romance + Thriller + 
+    USA + s_production + d_score + season,data=data)
+summary(fit_profit)
+
+
+# sadly after adjust for other factor super hero movies won't let you make more money
+augmented <- augment(fit_profit)
+augmented%>%ggplot(aes(x=.hat,y=.resid))+geom_point()+scale_x_continuous(limits=c(0,0.03))+geom_hline(yintercept = 0,color='red')+ggtitle("residual plot")
+
+
+library(car)
+#av.plots(fit_profit)
+op <- par(no.readonly = TRUE)
+par(mfrow=c(2,2))
+plot(fit_profit)
+par(op)
+par(mfrow=c(1,1))
+
+#There are some extreme outliers 2196, 2940, 394
+movie<-read.csv("movies_3.csv")
+
+#outlier movies
+t<-data%>%slice(c(2196,2940,394,2753))%>%left_join(movie,by="TMDBID")%>%select(title.x,budget.x,profit)%>%mutate(p_vs_b=profit/budget.x)
+t%>%kable()
+outlier<-t
+```
+
+After running model selection, we see that superhero and saving the world themes are not significantly associated with profit! This seems counterintuitive.
+
+We see a very significant p-value and the budget itself explained around 30% of the profit a movie made. Not surprisingly, most superhero and saving the world themed films are big budgeted, which can explain why they do so well. We further performed 2 reduced models: one with actor score but not budget ratio included and  vice versa. Since actor scores are derived from the movie's budgets, those variablse are collinear and therefore we should only include one of them. We decided to go with budget ratio for further analysis. 
+
+It seems that in order to make money in the movie industry, a producer should aim for high budget films with a good director and a cast of good actors. However, our "first star potion" variable (which accounts for the money paid to the first star) is insignificant, indicating that it is more important to spread out the budget among multiple established actors. Hence a producer does not necessarily have to invest heavily in one lead actor. This discovery argues against the rationale of whitewashing, which emphasizes hiring singular good actors who would sell the movie. 
+
+We also looked at the outliers in our model, and not surprisingly we have two of the biggest hits of all time (Star Wars and Avatar) as well as one of the biggest flops of all time (The Lone Ranger)
+
+Overall: Profitability is positively associated with higher budget, longer runtime, adventure and animation genres, good director and summer release and negatively associated with Action, Thriller and Drama genres.
+
+#### How to make more money with less budget
+
+However, having a higher budget seems unfair to the small budget movie producers, and certainly there are many examples where small budget films smashed box offices (Eg. Paranormal Activity). Hence, we are interested in learning the features that determine success in each of the budget categories.
+
+We stratified budget into three categoris: low budget(<30% quantile), median budget(>=30%, <=70%), high budget(>=70%). And let's find out what happens within each strata and across each strata and evaluate a movie's ability to make money as the ratio of it's profit against it's budget.
+
+NOTE : We use non log transformed budget and profit variables for all further analysis (except for decision tree at the end)
+```{r, warning=FALSE}
+data<-data_checkpoint1
+# Getting profit over budget ratio
+data<-data%>%mutate(p_vs_b=profit/budget)
+hist(data$p_vs_b)
+# Outliers => biggest profit to budget ratio films
+t<-data%>%filter(p_vs_b>50)%>%select(title,budget,profit,p_vs_b)
+t%>%kable()
+names(outlier) <-c("title", "budget", "profit", "p_vs_b")
+outlier<-rbind(outlier,t)
+data<-data%>%filter(p_vs_b<50) # filtering out outliers from our analysis
+hist(data$p_vs_b,breaks = 5000)
+x <- quantile(data$budget,0.3)
+y <- quantile(data$budget,0.7)
+#1 as low, 2 as median, 3 as high
+data<-data%>%mutate(c_budget=ifelse(budget<=x,1,ifelse(budget>y,3,2)))
+
+#make the histogram
+data%>%ggplot(aes(x=budget,y=profit))+geom_point()+facet_wrap(~c_budget)+ggtitle("Budget vs profit in each budget strate - fixed scale")
+data%>%ggplot(aes(x=budget,y=profit))+geom_point()+facet_wrap(~c_budget,scales = "free")+ggtitle("Budget vs profit in each budget strate - free scale")
+data%>%ggplot(aes(profit))+geom_histogram(bins = 30)+facet_grid(c_budget~.,scales = "free")+ggtitle("Profit of 3 budget strata")
+
+
+# Model fitting in each of the strata
+require(broom)
+fits<-data%>%group_by(c_budget)%>%
+  do(mod=lm(profit~budget,data=.))
+t<-tidy(fits,mod)
+t<-as.data.frame(t)
+t%>%filter(term=='budget')
+
+
+data%>%group_by(c_budget)%>%summarize(median_profit=median(profit))%>%ggplot(aes(x=c_budget,y=median_profit))+geom_bar(stat ="identity" )+xlab("Budget category")
+data%>%ggplot(aes(x=as.factor(c_budget),y=profit))+geom_boxplot()
+
+#p_vs_b ratio
+data%>%group_by(c_budget)%>%summarize(median_profit_vs_budget=median(profit/budget))%>%ggplot(aes(x=c_budget,y=median_profit_vs_budget))+geom_bar(stat ="identity" )+ xlab("Budget category")+ylab("profit vs budget ratio")
+
+
+data%>%mutate(profit_vs_budget=profit/budget)%>%filter(profit_vs_budget<100)%>%ggplot(aes(x=as.factor(c_budget),y=profit_vs_budget))+geom_boxplot()+xlab("Budget category") + ylab("profit vs budget ratio")
+```
+
+After stratifying our movies in budget categories, higher budget movies have more profitable movies, not that we are surprised by this. We then evaluated the significance of budget in each of the categories, and found that budget still exerts statistically significant influence on the profit.
+
+We then "normalized" each of the categories by their respective median budgets. Interestingly, the exuberant differences in profit disappears. Hence, we can conclude that the return of profits is multiplicative with respect to budget. 
+
+
+### Feature selection in each budget strata
+
+Now let's look at how a movie does within each budget strata and it's relationship with other factors.
+```{r, warning=FALSE}
+#require(dplyr)
+#data<-as.data.frame(data)
+data<-data%>%mutate(season=ifelse((month(data$date)>=4 &month(data$date)<=8),1,0))
+data_checkpoint3<-data
+dat_f<-data%>%select(TMDBID,p_vs_b,a_score_t,first_star_potion,runtime,year,Action,Adventure,Animation,Comedy,Crime,Drama,Romance,Thriller,USA,s_production,d_score,I_saving_world,I_superhero,c_budget,season)
+
+
+dat_low<-dat_f%>%filter(c_budget==1)
+# Number of films with low budget
+nrow(dat_low)
+
+dat_median<-dat_f%>%filter(c_budget==2)
+# Number of films with medium budget
+nrow(dat_median)
+
+dat_high<-dat_f%>%filter(c_budget==3)
+# Number of films with high budget
+nrow(dat_high)
+```
+
+#### High budget film analysis
+
+```{r, warning=FALSE}
+dat<-dat_high%>%select(-c(TMDBID,c_budget))
+dat<-dat[complete.cases(dat),]
+
+X<-data.matrix(dat)
+
+library(corrplot)
+cor = cor(X)
+corrplot(cor,method = 'circle')
+cor(X)[1,]
+hist(data$p_vs_b)
+hist(log10(data$p_vs_b+1.1))
+data<-data%>%mutate(p_vs_b=log10(p_vs_b+1.1))
+data<-data%>%filter(!is.na(p_vs_b))
+
+# fit and model selection
+fit=lm(p_vs_b~.,data=dat)
+step <- MASS::stepAIC(fit, direction="both",na.rm=TRUE,trace=FALSE)
+step$anova
+
+#final model:step$anova p_vs_b ~ runtime + year + Adventure + Animation + Drama + Romance + USA + s_production + d_score + season
+
+fit_high=lm(p_vs_b ~ runtime + year + Adventure + Animation + Drama + Romance + 
+    USA + s_production + d_score + season,data=dat)
+summary(fit_high)
+
+# fit quality checking
+op <- par(no.readonly = TRUE)
+par(mfrow=c(2,2))
+plot(fit_high)
+par(op)
+#outlier movies
+t<-dat_high%>%slice(c(21,829,25))%>%left_join(movie,by="TMDBID")%>%mutate(profit=revenue-budget)%>%select(title,budget,profit,p_vs_b)
+t%>%kable
+outlier<-rbind(outlier,t)
+
+require(bootstrap)
+# define functions 
+theta.fit <- function(x,y){lsfit(x,y)}
+theta.predict <- function(fit_high,x){cbind(1,x)%*%fit$coef} 
+
+# matrix of predictors
+X <- as.matrix(dat[c(-1)])
+# vector of predicted values
+y <- as.matrix(dat[c("p_vs_b")]) 
+
+# measurement of model fitness
+results <- crossval(X,y,theta.fit,theta.predict,ngroup=10)
+cor(y, fit$fitted.values)**2 # raw R2 
+cor(y,results$cv.fit)**2 # cross-validated R2
+
+```
+From the correlation plot, it seems that the director choice has a strong influence on the profitability. 
+
+According to our model, run time, director selection, production company and animation and romance exert statistically significant influence on profitability. Contrastingly, drama genre has negative influence on profit. 
+
+#### Medium budget film analysis
+
+```{r, warning=FALSE}
+dat<-dat_median%>%select(-c(TMDBID,c_budget))
+dat<-dat[complete.cases(dat),]
+
+X<-data.matrix(dat)
+
+require(corrplot)
+cor = cor(X)
+corrplot(cor,method = 'circle')
+
+cor(X)[1,]
+
+# fit and model selection
+fit=lm(p_vs_b~.,data=dat)
+step <- MASS::stepAIC(fit, direction="both",na.rm=TRUE,trace=FALSE)
+step$anova
+#final model:step$anova p_vs_b ~ first_star_potion + runtime + year + Action + Animation + Drama + Romance + Thriller + s_production + d_score + season
+
+fit_median=lm(p_vs_b ~ first_star_potion + runtime + year + Action + Animation + Drama + Romance + Thriller + s_production + d_score + season,data=dat)
+summary(fit_median)
+
+# fit quiality 
+op <- par(no.readonly = TRUE)
+par(mfrow=c(2,2))
+plot(fit_median)
+par(op)
+
+# outlier movies
+t<-dat_high%>%slice(c(489,70,69))%>%left_join(movie,by="TMDBID")%>%mutate(profit=revenue-budget)%>%select(title,budget,profit,p_vs_b)
+t%>%kable
+names(outlier) <- c("title", "budget", "profit", "p_vs_b")
+names(t) <- c("title", "budget", "profit", "p_vs_b")
+outlier<-rbind(outlier,t)
+
+require(bootstrap)
+# define functions 
+theta.fit <- function(x,y){lsfit(x,y)}
+theta.predict <- function(fit_median,x){cbind(1,x)%*%fit$coef} 
+
+# matrix of predictors
+X <- as.matrix(dat[c(-1)])
+# vector of predicted values
+y <- as.matrix(dat[c("p_vs_b")]) 
+
+results <- crossval(X,y,theta.fit,theta.predict,ngroup=10)
+cor(y, fit$fitted.values)**2 # raw R2 
+cor(y,results$cv.fit)**2 # cross-validated R2
+
+```
+From the correlation plot, it is difficult to pinpoint significant correlation between profitability and any of the other factors.
+
+According to our model, director choice, summer release and animation and drama genre exert statistically significant influence on profitability. Hence medium budget film should aim for summer release. 
+
+The predictive power of our model(give by $R^2$) is half that of our high budget film model.
+
+#### Low budget film analysis
+```{r, warning=FALSE}
+dat<-dat_low%>%select(-c(TMDBID,c_budget))
+dat<-dat[complete.cases(dat),]
+
+X<-data.matrix(dat)
+
+require(corrplot)
+cor = cor(X)
+corrplot(cor,method = 'circle')
+
+cor(X)[1,]
+
+# fit and model selection
+fit=lm(p_vs_b~.,data=dat)
+step <- MASS::stepAIC(fit, direction="both",na.rm=TRUE,trace=FALSE)
+step$anova
+#final model:step$anova p_vs_b ~ a_score_t + runtime + Action + Crime + Drama + s_production + d_score
+
+fit_low=lm(p_vs_b ~ a_score_t + runtime + Action + Crime + Drama + s_production + 
+    d_score ,data=dat)
+summary(fit_low)
+
+# Fit quality assessment
+op <- par(no.readonly = TRUE)
+par(mfrow=c(2,2))
+plot(fit_low)
+par(op)
+
+
+require(bootstrap)
+# define functions 
+theta.fit <- function(x,y){lsfit(x,y)}
+theta.predict <- function(fit_low,x){cbind(1,x)%*%fit$coef} 
+
+# matrix of predictors
+X <- as.matrix(dat[c(-1)])
+# vector of predicted values
+y <- as.matrix(dat[c("p_vs_b")]) 
+
+results <- crossval(X,y,theta.fit,theta.predict,ngroup=10)
+cor(y, fit$fitted.values)**2 # raw R2 
+
+```
+
+Only the runtime and director choice turn out to be significant predictors for a profitability of a low budget film. Interestingly, the predictive power of our model (given by $R^2$) is half that of our medium budget film model and quarter that of our high budget film model.
+
+
+### Model Comarison
+
+```{r, warning=FALSE}
+model_table<-data.frame(model="profit with all movies", Rsq=0.37,number_of_predictors=12)
+
+model_table<-bind_rows( model_table,data.frame(model="profit/budget with high budget", Rsq=0.20,number_of_predictors=7))
+           
+model_table<-bind_rows( model_table,data.frame(model="profit/budget with median budget", Rsq=0.1,number_of_predictors=8))
+
+model_table<-bind_rows( model_table,data.frame(model="profit/budget with low budget exclude outleir", Rsq=0.065,number_of_predictors=4))
+
+# R squared and numer of significant predictors of our model
+model_table%>%kable()
+
+
+require(broom)
+p_va=tidy(fit_profit) %>% mutate(term=gsub(".*Action.*", "ActionTRUE", term)) %>%
+  mutate(term=gsub(".*Adventure.*", "AdventureTRUE", term)) %>%
+  mutate(term=gsub(".*Animation.*", "AnimationTRUE", term)) %>%
+  mutate(term=gsub(".*Drama.*", "DramaTRUE", term)) %>%
+  mutate(term=gsub(".*Romance.*", "RomanceTRUE", term)) %>%
+  mutate(term=gsub(".*Thriller.*", "ThrillerTRUE", term)) 
+
+p_va=p_va %>% mutate(p.value=ifelse(p.value<=0.05,estimate,NA))%>% select(term,p.value)
+names(p_va)=c("term","All")
+l_va=tidy(fit_low) %>% mutate(p.value=ifelse(p.value<=0.05,estimate,NA))%>% select(term,p.value)
+names(l_va)=c("term","Low")
+m_va=tidy(fit_median) %>% mutate(p.value=ifelse(p.value<=0.05,estimate,NA))%>% select(term,p.value)
+names(m_va)=c("term","Median")
+h_va=tidy(fit_high) %>% mutate(p.value=ifelse(p.value<=0.05,estimate,NA))%>% select(term,p.value)
+names(h_va)=c("term","High")
+
+table=full_join(p_va,l_va,by="term")
+table=full_join(table,m_va,by="term")
+table=full_join(table,h_va,by="term")
+
+
+table= table %>% mutate(term=gsub(".*ActionTRUE.*", "Action", term)) %>%
+  mutate(term=gsub(".*AdventureTRUE.*", "Adventure", term)) %>%
+  mutate(term=gsub(".*AnimationTRUE.*", "Animation", term)) %>%
+  mutate(term=gsub(".*DramaTRUE.*", "Drama", term)) %>%
+  mutate(term=gsub(".*RomanceTRUE.*", "Romance", term)) %>%
+  mutate(term=gsub(".*ThrillerTRUE.*", "Thriller", term)) %>%
+  mutate(term=gsub(".*CrimeTRUE.*", "Crime", term)) 
+table[is.na(table)] <-0
+
+
+table %>% kable
+
+table = table %>% filter(term!="(Intercept)")
+
+
+table = gather(table,key=budget,value=coefficient,All:High) 
+table_g=table %>% filter(term %in% c("Action","Adventure","Animation","Drama","Romance","Thriller","Crime")) %>% filter(budget!="All")
+
+
+
+table_g %>% ggplot(aes(x=term,y=coefficient))+geom_bar(stat="identity",aes(fill=budget))+facet_wrap(~budget)+theme(axis.text.x  = element_text(angle=90, vjust=0.5))
+
+table_other = table %>% filter(!(term %in% c("Action","Adventure","Animation","Drama","Romance","Thriller","Crime"))) %>% filter(budget!="All")
+
+
+table_other %>% ggplot(aes(x=term,y=coefficient))+geom_bar(stat="identity",aes(fill=budget))+facet_wrap(~budget)+theme(axis.text.x  = element_text(angle=90, vjust=0.5))
+
+table_all= table %>% filter(budget=="All")
+
+table_all%>% ggplot(aes(x=term,y=coefficient))+geom_bar(stat="identity",aes(fill=budget))+facet_wrap(~budget)+theme(axis.text.x  = element_text(angle=90, vjust=0.5))
+
+```
+
+The two graphs give a pictorial summary of the imporatant genres (first bar plot) and and other predictors (second bar plot) that affect the profability of films in the 3 budget categories. It is apparent that each of the genre categories have different set of significant predictors for a movie's profitability. From the second plot, summer release apparently matters a lot for medium budget films. The third bar plot pictorially represents the influence of each of the factors on profitability of films in the non-stratified model. It seems that animation exerts significant influence on profiatbility.
+
+## Logistic Regression
+
+We also tried to categorize the success of a movie a binary variable (with success = profit vs budget ratio > median) on logistic regression as an alternative model building tool. 
+```{r, warning=FALSE}
+set.seed(1)
+dat_pred = dat %>%
+  mutate(p_vs_b=ifelse(p_vs_b>median(dat$p_vs_b),1,0))
+inTrain <- createDataPartition(y = dat_pred$p_vs_b,p=0.90)
+train_set <- slice(dat_pred, inTrain$Resample1)
+test_set <- slice(dat_pred, -inTrain$Resample1)
+
+
+full <- glm( p_vs_b~a_score_t+first_star_potion+runtime+year+Action+Adventure+Animation+Comedy+Crime+Drama+Romance+Thriller+USA+s_production+d_score+I_saving_world+I_superhero+season , data=train_set, family = "binomial")
+summary(full)
+
+f_hat1 = predict(full, test_set, type = "response")
+pred1=data.frame(test_set,f_hat1) %>%
+  mutate(pred=round(f_hat1)) %>% 
+  mutate(accurate=ifelse(pred==p_vs_b,1,0)) %>%
+  filter(!is.na(pred))
+
+nothing <- glm(p_vs_b ~ 1, data=train_set ,family=binomial)
+summary(nothing)
+
+
+bothways =step(nothing, list(lower=formula(nothing),upper=formula(full)),direction="both",trace=0)
+formula(bothways)
+
+final=glm(    p_vs_b ~ s_production + d_score + a_score_t + first_star_potion + Action + Drama + Comedy  + I_superhero + season, data=train_set, family = "binomial")
+
+summary(final)
+
+
+f_hat2 = predict(final, test_set, type = "response")
+pred2=data.frame(test_set,f_hat2) %>%
+  mutate(pred=round(f_hat2)) %>% 
+  mutate(accurate=ifelse(pred==p_vs_b,1,0))%>%
+  filter(!is.na(pred))
+
+sum(pred1$accurate)/nrow(pred1)
+
+sum(pred2$accurate)/nrow(pred2)
+```
+
+Our prediction accuracy is poor, and therefore we abandoned logistic regression and stuck with our linear regression model.
+
+-----
+
+# Predictions
+
+#### Building regression tree
+
+Now, we apply what we learned about the important factors determing a movie's success to films of 2016. To build prediction trees, we used all the predictors did not discriminate between the budget categories. This approach may have its disadvantages since stratification according to a film's budget will have allowed us to pick better predictions. However, in many cases, the budget of an upcoming film is well guarded before the film's release. As shown in the previous section, actor's scores capture some of budget information and can replace budget as a prediction. Nonetheless, we have selected 2016 films that have already been released or future films whose budget was available online.
+
+```{r, warning=FALSE, fig.height=10}
+require(lubridate)
+require(tree)
+require(gridExtra)
+theme_set(theme_bw(base_size = 16))
+require(rpart)
+
+#too large to knit we need to save and import it 
+data<-data_checkpoint1%>%mutate(season=ifelse((month(data_checkpoint1$date)>=4 &data$m<=8),1,0))
+data<-data%>%mutate(profit=log10(profit+300000000))
+data<-data%>%mutate(budget=log10(budget+100))
+dat<-data%>%select(profit,title,a_score_t,first_star_potion,runtime,budget,year,Action,Adventure,Animation,Comedy,Crime,Drama,Romance,Thriller,USA,s_production,d_score,I_saving_world,I_superhero,season)
+
+dat_saved<-dat%>%select(-title)
+# tree fit
+fit <- tree(profit~., data = dat_saved)
+plot(fit)
+text(fit, cex = 0.8)
+# cross validation to optimize tree
+fit_1 <- tree(profit~., data = as.data.frame(as.matrix(dat_saved)),
+            control = tree.control(nobs = nrow(dat_saved), 
+                                   mincut = 1, minsize = 2, mindev = 0.001))
+
+cv_polls <- cv.tree(fit_1)
+data_frame(tree_size = cv_polls$size, RSS = cv_polls$dev) %>% 
+  filter(tree_size>1 & tree_size < 20) %>%
+  ggplot(aes(tree_size, RSS)) + geom_point()
+
+#pruned_fit <- prune.tree(fit)
+pruned_fit <- prune.tree(fit_1, best=10)
+
+plot(pruned_fit)
+text(pruned_fit, cex = 0.8)
+
+#testing predictions using tree 
+
+require(caret)
+set.seed(1)
+
+inTrain <- createDataPartition(y = dat$profit, p=0.9) # Leave out 10% data for later testing
+train_set <- slice(dat, inTrain$Resample1)
+test_set <- slice(dat, -inTrain$Resample1)
+fit <- tree(profit~., data = select(train_set,-title),
+            control = tree.control(nobs = nrow(train_set), 
+                                   mincut = 1, minsize = 2, mindev = 0.001))
+
+pruned_fit <- prune.tree(fit,best=10)
+plot(pruned_fit)
+text(pruned_fit, cex = 0.8)
+pred <- predict(fit,newdata = select(test_set,-title))
+
+
+t<-data.frame(predict=pred,true=test_set$profit,title=test_set$title)
+t1<-t%>%filter(true>20.5)
+ggplot(aes(x=pred,y=true),data=t)+geom_point()+geom_point()+
+  geom_abline(intercept = 0, slope = 1,col=2)
+  
+RMSE<-postResample(pred,test_set$profit)
+RMSE
+#NRMSE
+RMSE[1]/(max(t$true)-min(t$true))
+RMSE[1]/mean(t$true)
+#cv.tree(fit)
+```
+
+As we can see, the model can predit 25% variance in the profit of films. It may be more useful to qualitatively rank the films based on its profit. 
+
+#### Using regression trees to predict the rank of upcoming films
+```{r, warning=FALSE}
+#fit <- tree(profit~., data = as.data.frame(as.matrix(select(dat,-title))),control = tree.control(nobs = nrow(dat), mincut = 1, minsize = 2, mindev = 0.001))
+upcoming_movies <- read.csv("upcoming_movies.csv")
+data<-upcoming_movies
+data<-data%>%mutate(director=as.character(director),star1=as.character(star1),star2=as.character(star2),star3=as.character(star3),star4=as.character(star4),star4=as.character(star4),star5=as.character(star5))
+score_director<-score_director%>%mutate(director=as.character(director))
+data<-left_join(data,score_director,by.x="director",by.y="director")
+t<-data%>%select(title,star1:star5)%>%left_join(score_actors,by=c("star1"="name"))
+colnames(t)<-c("title",  "star1",   "star2",   "star3",   "star4",  "star5",   "a_score1")
+t<-t%>%left_join(score_actors,by=c("star2"="name"))
+colnames(t)<-c("title",  "star1",   "star2",   "star3",   "star4",  "star5",   "a_score1","a_score2")
+t<-t%>%left_join(score_actors,by=c("star3"="name"))
+
+colnames(t)<-c("title",  "star1",   "star2",   "star3",   "star4",  "star5",   "a_score1","a_score2","a_score3")
+t<-t%>%left_join(score_actors,by=c("star4"="name"))
+colnames(t)<-c("title",  "star1",   "star2",   "star3",   "star4",  "star5",   "a_score1","a_score2","a_score3","a_score4")
+t<-t%>%left_join(score_actors,by=c("star5"="name"))
+colnames(t)<-c("title",  "star1",   "star2",   "star3",   "star4",  "star5",   "a_score1","a_score2","a_score3","a_score4","a_score5")
+t<-t%>%mutate(a_score1=ifelse(is.na(a_score1),0,a_score1),a_score2=ifelse(is.na(a_score2),0,a_score2),a_score3=ifelse(is.na(a_score3),0,a_score3),a_score4=ifelse(is.na(a_score4),0,a_score4),a_score5=ifelse(is.na(a_score5),0,a_score5))
+
+t<-t%>%mutate(first_star_potion=a_score1/(a_score1+a_score2+a_score3+a_score4+a_score5))
+t<-t%>%mutate(first_star_potion=ifelse(first_star_potion==Inf,0,first_star_potion))
+#dat_star<-data%>%select(TMDBID,budget)%>%right_join(t,by="TMDBID")
+t<-t%>%mutate(a_score_t=(0.4*a_score1+0.30*a_score2+0.20*a_score3+0.05*a_score4+0.05*a_score5))
+
+
+data<-t%>%left_join(data,by='title')
+data = data %>%mutate(date=parse_date_time(releaseDate,"mdy"))
+data<-data%>%mutate(season=ifelse(month(data$date)>=4&month(data$date)<=8,1,0))
+data<-data%>%left_join(select(data_checkpoint1,17,44))
+data[is.na(data)]=0
+data<-unique(data)
+data<-data%>%mutate(USA=1)
+dat<-data%>%select(title,a_score_t,first_star_potion,runtime,budget,year,Action,Adventure,Animation,Comedy,Crime,Drama,Romance,Thriller,USA,s_production,d_score,I_saving_world,I_superhero,season)
+
+
+
+t<- as.matrix(dat[c(-1)])
+t<-as.data.frame(t)
+
+pred <- predict(fit_1,newdata = t)
+#plot(pruned_fit)
+#text(pruned_fit, cex = 0.8)
+
+t<-data.frame(predict=pred,title=dat$title)
+t<-t%>%mutate(predict=10^(predict)+300000000)
+t<-t[order(-t$predict),]
+t<-unique(t)
+t<-t%>%mutate(rank=order(predict,decreasing=TRUE))
+t<-t[order(t$rank),]
+t%>%select(title,rank)%>%kable
+```
+
+Among the 11 films in our "upcoming movies" list, we predict that Ghost Busters, X-Men: Apocalypse and Zootopia should take the top crown. In reality Zootopia's box office revenue is clost to $1 billion, and it would fairly challenging to catch up to it.
+
+------
+
+# Conclusion
+
+Overall, the success of movies can be challenging to predict. Our data analysis flushes out  many interesting trends in the movie landscape. Our key finding is that production companies should pay attention to different sets of movie features for different budget catergories to finance a profitable film.  Certain features such as director choice and high production value heavily influence the profitability of a film. 
+
+If you want to direct a profiable film next year, check out our actor, director and production company scores, as well as our regression model results from the 3 budget categories.
+
+Lastly, let us look at some of our outliers that completely crushed our prediction models.
+```{r, warning=FALSE}
+#Movies made much more profit (log scale) than others 
+outlier %>%slice(1:4)%>% kable()
+#Movies made high profit vs budget ratio
+outlier %>%slice(5:22)%>% kable()
+```
+
+The first table shows 4 films - 3 with massive profits and the last with massive loss.
+The second table shows films with tremendous profit to budget ratio. Many of the low budget films that made "comparatively massive" yet "overall humble" profits are captured in this table.
